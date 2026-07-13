@@ -49,7 +49,11 @@ def _collect_pairs(
     crop_size: int,
     max_samples: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Run classical detector once; store (crop, raw features, residual targets)."""
+    """Run classical detector once; store (crop, raw features, residual targets).
+
+    Uses ``AblationDataset``, which pairs Fiji CSV row *k* with TIFF frame
+    ``k + 5`` (CSV 1 → image 6 through CSV 40 → image 45 by default).
+    """
     dataset = AblationDataset(data_dir, disc_ids, frame_min=frame_min, frame_max=frame_max)
     pairs: list[dict[str, Any]] = []
     for sample in tqdm(list(dataset), desc="Collecting classical detections"):

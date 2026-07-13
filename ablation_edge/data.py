@@ -17,6 +17,25 @@ GT_COLUMNS = ["BX", "BY", "Major", "Minor", "Angle"]
 FIJI_BBOX_COLUMNS = ["Width", "Height"]
 DEFAULT_FRAME_MIN = 6
 DEFAULT_FRAME_MAX = 45
+# Fiji CSV frame indices are 1..N within the ablation window; TIFF files are
+# numbered from the start of the movie. CSV frame 1 ↔ image frame 6.
+CSV_TO_IMAGE_FRAME_OFFSET = DEFAULT_FRAME_MIN - 1
+
+
+def csv_frame_to_image_frame(
+    csv_frame: int,
+    offset: int = CSV_TO_IMAGE_FRAME_OFFSET,
+) -> int:
+    """Map Fiji CSV row index to the matching TIFF frame number."""
+    return int(csv_frame) + int(offset)
+
+
+def image_frame_to_csv_frame(
+    image_frame: int,
+    offset: int = CSV_TO_IMAGE_FRAME_OFFSET,
+) -> int:
+    """Map TIFF frame number back to the Fiji CSV row index."""
+    return int(image_frame) - int(offset)
 
 
 def fiji_major_axis_vector(angle_deg: float) -> tuple[float, float]:
@@ -263,7 +282,13 @@ def crop_image(image: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
 
 
 class AblationDataset:
-    """Iterate over disc/frame pairs with optional Fiji ground truth."""
+    """
+    Iterate over disc/frame pairs with optional Fiji ground truth.
+
+    ``Sample.frame`` is the TIFF frame number (e.g. 6–45). Fiji CSV rows are
+    indexed from 1 within the ablation window and map via
+    ``csv_frame_to_image_frame`` (CSV 1 → image 6).
+    """
 
     def __init__(
         self,
@@ -287,7 +312,7 @@ class AblationDataset:
         return True
 
     def __len__(self) -> int:
-        return sum(len(list(self._frames_for_disc(d))) for d in self.disc_ids)
+        return sum(1 for _ in self)
 
     def __iter__(self) -> Iterator[Sample]:
         for disc_id in self.disc_ids:
@@ -298,15 +323,19 @@ class AblationDataset:
             elif self.require_ground_truth:
                 continue
 
-            for frame, image_path in self._frames_for_disc(disc_id):
-                if not self._frame_in_range(frame):
+            for image_frame, image_path in self._frames_for_disc(disc_id):
+                if not self._frame_in_range(image_frame):
                     continue
                 gt = None
-                if gt_df is not None and frame in gt_df.index:
-                    gt = fiji_csv_to_ellipse_params(gt_df.loc[frame])
+                if gt_df is not None:
+                    csv_frame = image_frame_to_csv_frame(image_frame)
+                    if csv_frame in gt_df.index:
+                        gt = fiji_csv_to_ellipse_params(gt_df.loc[csv_frame])
+                    elif self.require_ground_truth:
+                        continue
                 elif self.require_ground_truth:
                     continue
-                yield Sample(disc_id, frame, image_path, gt)
+                yield Sample(disc_id, image_frame, image_path, gt)
 
     def _frames_for_disc(self, disc_id: str) -> Iterator[tuple[int, Path]]:
         for path in sorted(self.data_dir.glob(f"{disc_id}_frame*.tif")):

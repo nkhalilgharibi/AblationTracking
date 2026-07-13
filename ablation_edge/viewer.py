@@ -16,6 +16,7 @@ from .data import (
     DEFAULT_FRAME_MIN,
     GT_COLUMNS,
     fiji_csv_to_ellipse_params,
+    image_frame_to_csv_frame,
     load_gray_image,
     load_ground_truth,
     list_disc_ids,
@@ -212,9 +213,13 @@ class DiscViewer:
             match = frame_re.match(path.name)
             if match is None:
                 continue
-            frame = int(match.group(1))
-            if frame in gt_df.index and self.frame_min <= frame <= self.frame_max:
-                frames.append(frame)
+            image_frame = int(match.group(1))
+            csv_frame = image_frame_to_csv_frame(image_frame)
+            if (
+                csv_frame in gt_df.index
+                and self.frame_min <= image_frame <= self.frame_max
+            ):
+                frames.append(image_frame)
 
         if not frames:
             self.title.set_text(f"No labeled frames found for {disc_id}")
@@ -222,12 +227,17 @@ class DiscViewer:
             return
 
         gt_by_frame = {
-            frame: fiji_csv_to_ellipse_params(gt_df.loc[frame])
-            for frame in frames
+            image_frame: fiji_csv_to_ellipse_params(
+                gt_df.loc[image_frame_to_csv_frame(image_frame)]
+            )
+            for image_frame in frames
         }
         gt_csv_by_frame = {
-            frame: {key: float(gt_df.loc[frame, key]) for key in ("BX", "BY", "Width", "Height")}
-            for frame in frames
+            image_frame: {
+                key: float(gt_df.loc[image_frame_to_csv_frame(image_frame), key])
+                for key in ("BX", "BY", "Width", "Height")
+            }
+            for image_frame in frames
         }
         pred_by_frame = self._load_predictions(disc_id, frames)
         hybrid_by_frame = self._load_hybrid_predictions(disc_id, frames)
