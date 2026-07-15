@@ -17,6 +17,32 @@ def main() -> None:
     parser.add_argument("--tune-samples", type=int, default=400)
     parser.add_argument("--frame-min", type=int, default=DEFAULT_FRAME_MIN)
     parser.add_argument("--frame-max", type=int, default=DEFAULT_FRAME_MAX)
+    parser.add_argument(
+        "--cv",
+        type=int,
+        default=3,
+        dest="cv_folds",
+        help="GroupKFold folds over discs (default: 3).",
+    )
+    parser.add_argument(
+        "--search",
+        choices=("grid", "random"),
+        default="grid",
+        help="Hyperparameter search strategy (default: grid).",
+    )
+    parser.add_argument(
+        "--n-iter",
+        type=int,
+        default=24,
+        help="RandomizedSearchCV iterations when --search random.",
+    )
+    parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument(
+        "--verbose",
+        type=int,
+        default=3,
+        help="sklearn search verbosity (0–3; default: 3).",
+    )
     args = parser.parse_args()
     train_pipeline(
         data_dir=args.data_dir,
@@ -24,6 +50,11 @@ def main() -> None:
         tune_sample_limit=args.tune_samples,
         frame_min=args.frame_min,
         frame_max=args.frame_max,
+        cv_folds=args.cv_folds,
+        search=args.search,
+        n_iter=args.n_iter,
+        n_jobs=args.n_jobs,
+        verbose=args.verbose,
     )
 
 

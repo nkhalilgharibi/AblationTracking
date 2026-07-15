@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 import numpy as np
 import pandas as pd
 
 from .data import GT_COLUMNS
-from .detector import EllipseResult, compare_to_ground_truth
+from .detector import EllipseResult, _signed_angle_delta, compare_to_ground_truth
 
 
 def evaluate_predictions(
@@ -55,6 +53,18 @@ def evaluate_predictions(
     return pd.DataFrame(normalized)
 
 
+def _signed_residuals(detected: pd.DataFrame, col: str) -> np.ndarray:
+    """pred − gt; Angle uses shortest signed difference on a 180° period."""
+    pred = detected[f"pred_{col}"].to_numpy(dtype=np.float64)
+    gt = detected[f"gt_{col}"].to_numpy(dtype=np.float64)
+    if col == "Angle":
+        return np.asarray(
+            [_signed_angle_delta(p, g) for p, g in zip(pred, gt)],
+            dtype=np.float64,
+        )
+    return pred - gt
+
+
 def summarize_metrics(eval_df: pd.DataFrame) -> pd.DataFrame:
     detected = eval_df[eval_df["detected"]]
     summary = {
@@ -63,8 +73,18 @@ def summarize_metrics(eval_df: pd.DataFrame) -> pd.DataFrame:
         "detection_rate": len(detected) / max(len(eval_df), 1),
     }
     for col in GT_COLUMNS:
-        summary[f"mae_{col}"] = detected[f"err_{col}"].mean() if len(detected) else np.nan
-        summary[f"median_{col}"] = detected[f"err_{col}"].median() if len(detected) else np.nan
+        if len(detected) == 0:
+            summary[f"mae_{col}"] = np.nan
+            summary[f"rmse_{col}"] = np.nan
+            summary[f"mean_{col}"] = np.nan
+            summary[f"median_{col}"] = np.nan
+            continue
+        abs_err = detected[f"err_{col}"].to_numpy(dtype=np.float64)
+        resid = _signed_residuals(detected, col)
+        summary[f"mae_{col}"] = float(np.mean(abs_err))
+        summary[f"rmse_{col}"] = float(np.sqrt(np.mean(resid**2)))
+        summary[f"mean_{col}"] = float(np.mean(resid))
+        summary[f"median_{col}"] = float(np.median(abs_err))
     return pd.DataFrame([summary])
 
 
@@ -79,6 +99,8 @@ def print_metrics(eval_df: pd.DataFrame, title: str = "Evaluation") -> None:
     for col in GT_COLUMNS:
         print(
             f"  {col:>5}  MAE={summary[f'mae_{col}']:8.2f}  "
+            f"RMSE={summary[f'rmse_{col}']:8.2f}  "
+            f"mean={summary[f'mean_{col}']:8.2f}  "
             f"median={summary[f'median_{col}']:8.2f}"
         )
 

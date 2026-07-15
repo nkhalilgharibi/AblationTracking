@@ -129,9 +129,16 @@ python3 train_detector.py \
   --data-dir Data \
   --split-path splits/train_test_split.json \
   --tune-samples 400 \
+  --cv 3 \
+  --search grid \
   --frame-min 6 \
   --frame-max 45
 ```
+
+Tuning uses sklearn `GridSearchCV` (or `--search random` → `RandomizedSearchCV`) with
+**GroupKFold** over discs so frames from the same movie stay in one fold. The search
+loss is mean quadratic error on **Major** and **Minor** only:
+`mean( (ΔMajor)² + (ΔMinor)² )`.
 
 This writes:
 

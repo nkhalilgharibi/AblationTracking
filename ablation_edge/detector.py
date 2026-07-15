@@ -207,7 +207,10 @@ class AblationEdgeDetector:
     1. Estimate disc center from the bright central tissue blob
     2. Sample the outer ablation edge on rays around 360°
     3. Fit an ellipse to those points (two-pass center refine)
-    4. Optional light Ridge residual correction vs Fiji labels
+
+    Training tunes classical hyperparameters via sklearn search (see ``ablation_edge.model``).
+    Optional Ridge residual correction remains available on this class but is not used
+    by the current train pipeline.
     """
 
     DEFAULT_PARAMS: dict[str, Any] = {
