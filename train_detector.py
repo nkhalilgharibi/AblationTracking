@@ -14,7 +14,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train ablation edge detector.")
     parser.add_argument("--data-dir", type=Path, default=Path("Data"))
     parser.add_argument("--split-path", type=Path, default=Path("splits/train_test_split.json"))
-    parser.add_argument("--tune-samples", type=int, default=400)
+    parser.add_argument("--tune-samples", type=int, default=None)
     parser.add_argument("--frame-min", type=int, default=DEFAULT_FRAME_MIN)
     parser.add_argument("--frame-max", type=int, default=DEFAULT_FRAME_MAX)
     parser.add_argument(

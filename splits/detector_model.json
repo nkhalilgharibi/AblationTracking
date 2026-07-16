@@ -14,7 +14,7 @@
     "r_min": 70,
     "r_max": 200,
     "n_angles": 180,
-    "min_dark_run": 6,
+    "min_dark_run": 5,
     "dark_run_mode": "first",
     "extremity_sectors": 36,
     "use_arc_tips": true,
@@ -148,12 +148,12 @@
     "Minor"
   ],
   "tuning_loss": "mean_quadratic_major_minor",
-  "tuning_score": 715.6815681487901,
+  "tuning_score": 671.3490327762423,
   "cv_folds": 3,
   "search": "grid",
   "correction_enabled": false,
   "timing_seconds": {
-    "hyperparameter_search": 216.096,
-    "total": 356.341
+    "hyperparameter_search": 896.175,
+    "total": 1472.023
   }
 }

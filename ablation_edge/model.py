@@ -22,11 +22,11 @@ MINOR_IDX = ELLIPSE_COLUMNS.index("Minor")
 # Defaults match AblationEdgeDetector.DEFAULT_PARAMS where applicable.
 DEFAULT_PARAM_GRID: dict[str, list[Any]] = {
     "edge_blur": [9], #[9, 11],
-    "dark_threshold": [18, 22], #[20, 22, 24],
+    "dark_threshold": [18, 22], #[10,12,14,16,18,20,22,24], #[20, 22, 24],
     "bright_threshold": [22],
     "use_adaptive_threshold": [False],
     "dark_run_mode": ["first"],
-    "min_dark_run": [4, 6],
+    "min_dark_run": [5], #[4, 6],
     "radius_outlier_sigma": [2.7], #[2.5, 3.0],
     "center_max_area": [40000],
     "r_min": [70],

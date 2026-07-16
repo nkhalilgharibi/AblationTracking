@@ -82,13 +82,17 @@ def tune_detector(
     """
     dataset = AblationDataset(data_dir, train_disc_ids, frame_min=frame_min, frame_max=frame_max)
     samples = list(dataset)
+    print(f" length of samples: {len(samples)}")
+    print(f" max_samples: {max_samples}")
     if max_samples is not None and len(samples) > max_samples:
         rng = np.random.default_rng(random_state)
         rng.shuffle(samples)
         samples = samples[:max_samples]
-
+    print(f" length of samples after random sampling: {len(samples)}")
     X, y, groups = samples_to_xy(samples, preload=True)
+    print(f"Tuning training samples (labeled frames): {len(X)}")
     n_groups = len(np.unique(groups))
+    print(f"Tuning discs (GroupKFold groups): {n_groups}")
     n_splits = max(2, min(cv_folds, n_groups))
     cv = GroupKFold(n_splits=n_splits)
 
@@ -174,7 +178,7 @@ def run_evaluation(
 def train_pipeline(
     data_dir: Path | str = "Data",
     split_path: Path | str = "splits/train_test_split.json",
-    tune_sample_limit: int = 400,
+    tune_sample_limit: int | None = None,
     frame_min: int | None = DEFAULT_FRAME_MIN,
     frame_max: int | None = DEFAULT_FRAME_MAX,
     *,
@@ -230,7 +234,7 @@ def train_pipeline(
         train_ids,
         detector,
         label="Train set",
-        max_samples=500,
+        max_samples=None, #500,
         frame_min=frame_min,
         frame_max=frame_max,
     )
@@ -239,7 +243,7 @@ def train_pipeline(
         test_ids,
         detector,
         label="Test set",
-        max_samples=500,
+        max_samples=None, #500,
         frame_min=frame_min,
         frame_max=frame_max,
     )
