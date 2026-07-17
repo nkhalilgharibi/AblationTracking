@@ -26,7 +26,7 @@ from .evaluate import evaluate_predictions, print_metrics, summarize_metrics
 from .model import (
     DEFAULT_PARAM_GRID,
     best_estimator_params,
-    major_minor_quadratic_scorer,
+    ellipse_quadratic_scorer,
     make_detection_pipeline,
     param_grid_for_pipeline,
     samples_to_xy,
@@ -65,6 +65,7 @@ def tune_detector(
     frame_min: int | None = DEFAULT_FRAME_MIN,
     frame_max: int | None = DEFAULT_FRAME_MAX,
     *,
+    frame_stride: int = 5,
     cv_folds: int = 3,
     search: SearchMode = "grid",
     n_iter: int = 24,
@@ -77,18 +78,37 @@ def tune_detector(
     Tune ring-fit hyperparameters with sklearn Grid/RandomizedSearch + GroupKFold.
 
     Predictions and labels store the full ellipse ``[BX, BY, Major, Minor, Angle]``
-    (Angle = Fiji clockwise degrees from +x) for visualization. Scoring uses only
-    Major/Minor: ``-mean( (dMajor)^2 + (dMinor)^2 )``.
+    (Angle = Fiji clockwise degrees from +x; OpenCV angle is converted upstream).
+    Scoring uses all five params:
+    ``-mean( dBX² + dBY² + dMajor² + dMinor² + dAngle² )`` with circular dAngle.
+
+    By default only every ``frame_stride``-th frame in ``[frame_min, frame_max]``
+    is used (e.g. 6, 11, 16, …, 41 when min=6, max=45, stride=5).
     """
     dataset = AblationDataset(data_dir, train_disc_ids, frame_min=frame_min, frame_max=frame_max)
     samples = list(dataset)
-    print(f" length of samples: {len(samples)}")
-    print(f" max_samples: {max_samples}")
+    print(f"Labeled frames in window {frame_min}–{frame_max}: {len(samples)}")
+
+    if frame_stride is not None and frame_stride > 1:
+        base = int(frame_min) if frame_min is not None else 0
+        before = len(samples)
+        samples = [
+            sample
+            for sample in samples
+            if (int(sample.frame) - base) % int(frame_stride) == 0
+        ]
+        print(
+            f"Keeping every {frame_stride}-th frame "
+            f"(from {frame_min}): {before} → {len(samples)} samples"
+        )
+
+    print(f"max_samples cap: {max_samples}")
     if max_samples is not None and len(samples) > max_samples:
         rng = np.random.default_rng(random_state)
         rng.shuffle(samples)
         samples = samples[:max_samples]
-    print(f" length of samples after random sampling: {len(samples)}")
+        print(f"After random cap: {len(samples)} samples")
+
     X, y, groups = samples_to_xy(samples, preload=True)
     print(f"Tuning training samples (labeled frames): {len(X)}")
     n_groups = len(np.unique(groups))
@@ -98,7 +118,8 @@ def tune_detector(
 
     pipeline = make_detection_pipeline()
     param_grid = param_grid_for_pipeline(search_space or DEFAULT_PARAM_GRID)
-    scorer = major_minor_quadratic_scorer()
+    # Previous (Major/Minor only): scorer = major_minor_quadratic_scorer()
+    scorer = ellipse_quadratic_scorer()
 
     print(
         f"Tuning with {search} search, GroupKFold(k={n_splits}), "
@@ -138,7 +159,7 @@ def tune_detector(
     best_params["cv_folds"] = n_splits
     best_params["search"] = search
 
-    print(f"Best CV quadratic loss (Major/Minor): {best_params['tuning_score']:.4f}")
+    print(f"Best CV quadratic loss (BX, BY, Major, Minor, Angle): {best_params['tuning_score']:.4f}")
     print(f"Best params: {best_estimator_params(search_cv)}")
     return best_params, search_cv
 
@@ -182,6 +203,7 @@ def train_pipeline(
     frame_min: int | None = DEFAULT_FRAME_MIN,
     frame_max: int | None = DEFAULT_FRAME_MAX,
     *,
+    tune_frame_stride: int = 5,
     cv_folds: int = 3,
     search: SearchMode = "grid",
     n_iter: int = 24,
@@ -192,6 +214,8 @@ def train_pipeline(
     Split discs → tune OpenCV detector with sklearn search + GroupKFold → evaluate → save.
 
     Residual correction is intentionally omitted for now.
+    Hyperparameter search defaults to every ``tune_frame_stride``-th frame
+    in ``[frame_min, frame_max]`` (e.g. 6, 11, …, 41).
     """
     pipeline_t0 = time.perf_counter()
     data_dir = Path(data_dir)
@@ -204,7 +228,7 @@ def train_pipeline(
         train_ids, test_ids = create_train_test_split(data_dir, split_path)
 
     print(f"Train discs: {len(train_ids)}, test discs: {len(test_ids)}")
-    print(f"Using frames {frame_min}–{frame_max}")
+    print(f"Using frames {frame_min}–{frame_max} (tune stride={tune_frame_stride})")
 
     tune_t0 = time.perf_counter()
     tuned_params, _search_cv = tune_detector(
@@ -213,6 +237,7 @@ def train_pipeline(
         max_samples=tune_sample_limit,
         frame_min=frame_min,
         frame_max=frame_max,
+        frame_stride=tune_frame_stride,
         cv_folds=cv_folds,
         search=search,
         n_iter=n_iter,
@@ -255,11 +280,12 @@ def train_pipeline(
         "test_discs": test_ids,
         "frame_min": frame_min,
         "frame_max": frame_max,
+        "tune_frame_stride": tune_frame_stride,
         "coordinate_system": "ellipse_center",
         "target": "ablation_ring_outer",
         "ellipse_columns": ["BX", "BY", "Major", "Minor", "Angle"],
-        "tuning_targets": ["Major", "Minor"],
-        "tuning_loss": "mean_quadratic_major_minor",
+        "tuning_targets": ["BX", "BY", "Major", "Minor", "Angle"],
+        "tuning_loss": "mean_quadratic_ellipse_circular_angle",
         "tuning_score": tuned_params.get("tuning_score"),
         "cv_folds": tuned_params.get("cv_folds"),
         "search": tuned_params.get("search"),

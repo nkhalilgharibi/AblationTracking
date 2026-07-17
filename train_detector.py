@@ -18,6 +18,13 @@ def main() -> None:
     parser.add_argument("--frame-min", type=int, default=DEFAULT_FRAME_MIN)
     parser.add_argument("--frame-max", type=int, default=DEFAULT_FRAME_MAX)
     parser.add_argument(
+        "--tune-frame-stride",
+        type=int,
+        default=5,
+        help="Use every N-th frame for hyperparameter search within "
+        "--frame-min/--frame-max (default: 5 → frames 6,11,...,41).",
+    )
+    parser.add_argument(
         "--cv",
         type=int,
         default=3,
@@ -50,6 +57,7 @@ def main() -> None:
         tune_sample_limit=args.tune_samples,
         frame_min=args.frame_min,
         frame_max=args.frame_max,
+        tune_frame_stride=args.tune_frame_stride,
         cv_folds=args.cv_folds,
         search=args.search,
         n_iter=args.n_iter,

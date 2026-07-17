@@ -10,23 +10,27 @@ from sklearn.metrics import make_scorer
 from sklearn.pipeline import Pipeline
 
 from .data import GT_COLUMNS, Sample, load_gray_image
-from .detector import AblationEdgeDetector, EllipseResult
+from .detector import AblationEdgeDetector, EllipseResult, _angle_diff
 
 # Full OpenCV / Fiji ellipse vector kept for visualization & evaluation.
 # Order: BX, BY, Major, Minor, Angle (Angle = clockwise deg from +x).
+# OpenCV cv2.fitEllipse angle is converted to this Fiji convention inside
+# AblationEdgeDetector (_fit_ellipse_from_points), so predict() Angle is
+# already comparable to ground-truth Fiji Angle — no extra conversion here.
 ELLIPSE_COLUMNS = list(GT_COLUMNS)
 MAJOR_IDX = ELLIPSE_COLUMNS.index("Major")
 MINOR_IDX = ELLIPSE_COLUMNS.index("Minor")
+ANGLE_IDX = ELLIPSE_COLUMNS.index("Angle")
 
 # Hyperparameters exposed to GridSearch / RandomizedSearch.
 # Defaults match AblationEdgeDetector.DEFAULT_PARAMS where applicable.
 DEFAULT_PARAM_GRID: dict[str, list[Any]] = {
-    "edge_blur": [9], #[9, 11],
-    "dark_threshold": [18, 22], #[10,12,14,16,18,20,22,24], #[20, 22, 24],
+    "edge_blur": [7], #[7,11], #[9, 11],
+    "dark_threshold": [19], #[17,18,19], #[18, 22], #[10,12,14,16,18,20,22,24], #[20, 22, 24],
     "bright_threshold": [22],
     "use_adaptive_threshold": [False],
     "dark_run_mode": ["first"],
-    "min_dark_run": [5], #[4, 6],
+    "min_dark_run": [5], #[4,5], #[4, 6],
     "radius_outlier_sigma": [2.7], #[2.5, 3.0],
     "center_max_area": [40000],
     "r_min": [70],
@@ -62,7 +66,7 @@ class AblationEllipseEstimator(BaseEstimator, RegressorMixin):
 
     ``predict`` returns ``(n_samples, 5)`` columns
     ``[BX, BY, Major, Minor, Angle]`` so overlays / the disc viewer can use
-    the full fit. Training score uses only Major/Minor (see scorer below).
+    the full fit. Training score uses all five params (see scorer below).
     Failed detections are filled with ``0`` (misses are heavily penalized).
     """
 
@@ -186,28 +190,65 @@ def _major_minor_columns(y: np.ndarray) -> np.ndarray:
     )
 
 
-def major_minor_quadratic_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """
-    Mean quadratic loss on Major/Minor only:
-    ``mean( (dMajor)^2 + (dMinor)^2 )``.
+# --- Previous cost (Major/Minor only). Keep for easy rollback. ---
+# def major_minor_quadratic_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+#     """
+#     Mean quadratic loss on Major/Minor only:
+#     ``mean( (dMajor)^2 + (dMinor)^2 )``.
+#
+#     Accepts full ``(n, 5)`` ellipse vectors; BX, BY, Angle are ignored for the loss.
+#     """
+#     major_minor_true = _major_minor_columns(y_true)
+#     major_minor_pred = _major_minor_columns(y_pred)
+#     if major_minor_true.shape != major_minor_pred.shape:
+#         raise ValueError(
+#             f"Shape mismatch after Major/Minor extract: "
+#             f"{major_minor_true.shape} vs {major_minor_pred.shape}"
+#         )
+#     residuals = major_minor_pred - major_minor_true
+#     return float(np.mean(np.sum(residuals**2, axis=1)))
+#
+#
+# def major_minor_quadratic_scorer():
+#     """sklearn scorer: greater is better → negative Major/Minor quadratic loss."""
+#     return make_scorer(
+#         lambda y_true, y_pred: -major_minor_quadratic_loss(y_true, y_pred),
+#         greater_is_better=True,
+#     )
 
-    Accepts full ``(n, 5)`` ellipse vectors; BX, BY, Angle are ignored for the loss.
+
+def ellipse_quadratic_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
-    major_minor_true = _major_minor_columns(y_true)
-    major_minor_pred = _major_minor_columns(y_pred)
-    if major_minor_true.shape != major_minor_pred.shape:
+    Mean quadratic loss on full ellipse ``[BX, BY, Major, Minor, Angle]``:
+    ``mean( dBX² + dBY² + dMajor² + dMinor² + dAngle² )``.
+
+    ``Angle`` is already Fiji-convention (clockwise deg from +x, [0, 180)),
+    matching ground truth. Residuals use the shortest circular difference on
+    the 180° ellipse-orientation period (via ``_angle_diff``).
+    """
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+    if y_true.shape != y_pred.shape:
+        raise ValueError(f"Shape mismatch: y_true {y_true.shape} vs y_pred {y_pred.shape}")
+    if y_true.ndim != 2 or y_true.shape[1] != len(ELLIPSE_COLUMNS):
         raise ValueError(
-            f"Shape mismatch after Major/Minor extract: "
-            f"{major_minor_true.shape} vs {major_minor_pred.shape}"
+            f"Expected (n, {len(ELLIPSE_COLUMNS)}) ellipse vectors, got {y_true.shape}"
         )
-    residuals = major_minor_pred - major_minor_true
+
+    residuals = y_pred - y_true
+    # Circular angle residual (unsigned shortest arc on [0, 180)).
+    angle_err = np.asarray(
+        [_angle_diff(float(p), float(t)) for p, t in zip(y_pred[:, ANGLE_IDX], y_true[:, ANGLE_IDX])],
+        dtype=np.float64,
+    )
+    residuals[:, ANGLE_IDX] = angle_err
     return float(np.mean(np.sum(residuals**2, axis=1)))
 
 
-def major_minor_quadratic_scorer():
-    """sklearn scorer: greater is better → negative Major/Minor quadratic loss."""
+def ellipse_quadratic_scorer():
+    """sklearn scorer: greater is better → negative full-ellipse quadratic loss."""
     return make_scorer(
-        lambda y_true, y_pred: -major_minor_quadratic_loss(y_true, y_pred),
+        lambda y_true, y_pred: -ellipse_quadratic_loss(y_true, y_pred),
         greater_is_better=True,
     )
 
@@ -247,7 +288,7 @@ def samples_to_xy(
     Build sklearn ``(X, y, groups)`` from dataset samples.
 
     ``y`` is ``(n, 5)`` with columns ``[BX, BY, Major, Minor, Angle]``.
-    Scoring still uses only Major/Minor; BX/BY/Angle are kept for visualization.
+    Scoring uses all five (Angle already Fiji-convention from the detector).
     ``groups`` are disc IDs for GroupKFold.
     """
     paths_or_images: list[Any] = []

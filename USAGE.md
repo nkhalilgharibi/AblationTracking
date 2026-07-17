@@ -129,6 +129,7 @@ python3 train_detector.py \
   --data-dir Data \
   --split-path splits/train_test_split.json \
   --tune-samples 400 \
+  --tune-frame-stride 5 \
   --cv 3 \
   --search grid \
   --frame-min 6 \
@@ -136,9 +137,14 @@ python3 train_detector.py \
 ```
 
 Tuning uses sklearn `GridSearchCV` (or `--search random` → `RandomizedSearchCV`) with
-**GroupKFold** over discs so frames from the same movie stay in one fold. The search
-loss is mean quadratic error on **Major** and **Minor** only:
-`mean( (ΔMajor)² + (ΔMinor)² )`.
+**GroupKFold** over discs so frames from the same movie stay in one fold.
+By default only every 5th frame in 6–45 is used for the search
+(`6, 11, 16, 21, 26, 31, 36, 41`; override with `--tune-frame-stride`, or `1` for all frames).
+The search loss is mean quadratic error on all ellipse params
+`[BX, BY, Major, Minor, Angle]`:
+`mean( (ΔBX)² + (ΔBY)² + (ΔMajor)² + (ΔMinor)² + (ΔAngle)² )`,
+where `ΔAngle` is the shortest circular difference on the 180° period.
+(OpenCV `fitEllipse` angle is converted to Fiji clockwise-from-+x before scoring.)
 
 This writes:
 
