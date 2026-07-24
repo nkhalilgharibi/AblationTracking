@@ -27,12 +27,19 @@ from .model import (
     DEFAULT_PARAM_GRID,
     best_estimator_params,
     ellipse_quadratic_scorer,
+    ellipse_quadratic_sincos_angle_scorer,
     make_detection_pipeline,
     param_grid_for_pipeline,
     samples_to_xy,
 )
 
 SearchMode = Literal["grid", "random"]
+TuningLoss = Literal["circular", "sincos"]
+
+TUNING_LOSS_NAMES: dict[TuningLoss, str] = {
+    "circular": "mean_quadratic_ellipse_circular_angle",
+    "sincos": "mean_quadratic_ellipse_sincos_angle",
+}
 
 
 def _format_duration(seconds: float) -> str:
@@ -73,14 +80,16 @@ def tune_detector(
     random_state: int = 0,
     n_jobs: int = 1,
     verbose: int = 3,
+    tuning_loss: TuningLoss = "circular",
 ) -> tuple[dict[str, Any], Any]:
     """
     Tune ring-fit hyperparameters with sklearn Grid/RandomizedSearch + GroupKFold.
 
     Predictions and labels store the full ellipse ``[BX, BY, Major, Minor, Angle]``
     (Angle = Fiji clockwise degrees from +x; OpenCV angle is converted upstream).
-    Scoring uses all five params:
-    ``-mean( dBX² + dBY² + dMajor² + dMinor² + dAngle² )`` with circular dAngle.
+    Scoring uses all five params. Angle term is either circular ``dAngle²``
+    (``tuning_loss='circular'``) or the hybrid-style quadratic embedding
+    ``(sin2θ_pred−sin2θ_gt)²+(cos2θ_pred−cos2θ_gt)²`` (``tuning_loss='sincos'``).
 
     By default only every ``frame_stride``-th frame in ``[frame_min, frame_max]``
     is used (e.g. 6, 11, 16, …, 41 when min=6, max=45, stride=5).
@@ -118,11 +127,16 @@ def tune_detector(
 
     pipeline = make_detection_pipeline()
     param_grid = param_grid_for_pipeline(search_space or DEFAULT_PARAM_GRID)
-    # Previous (Major/Minor only): scorer = major_minor_quadratic_scorer()
-    scorer = ellipse_quadratic_scorer()
+    if tuning_loss == "sincos":
+        scorer = ellipse_quadratic_sincos_angle_scorer()
+        angle_term = "sincos(2θ) embedding residual"
+    else:
+        scorer = ellipse_quadratic_scorer()
+        angle_term = "circular dAngle²"
 
     print(
         f"Tuning with {search} search, GroupKFold(k={n_splits}), "
+        f"loss={tuning_loss} ({angle_term}), "
         f"{len(X)} samples across {n_groups} discs..."
     )
 
@@ -158,6 +172,7 @@ def tune_detector(
     best_params["tuning_score"] = float(-search_cv.best_score_)  # positive quadratic loss
     best_params["cv_folds"] = n_splits
     best_params["search"] = search
+    best_params["tuning_loss"] = TUNING_LOSS_NAMES[tuning_loss]
 
     print(f"Best CV quadratic loss (BX, BY, Major, Minor, Angle): {best_params['tuning_score']:.4f}")
     print(f"Best params: {best_estimator_params(search_cv)}")
@@ -209,6 +224,8 @@ def train_pipeline(
     n_iter: int = 24,
     n_jobs: int = 1,
     verbose: int = 3,
+    tuning_loss: TuningLoss = "circular",
+    model_out: Path | str | None = None,
 ) -> tuple[AblationEdgeDetector, dict[str, Any]]:
     """
     Split discs → tune OpenCV detector with sklearn search + GroupKFold → evaluate → save.
@@ -216,6 +233,10 @@ def train_pipeline(
     Residual correction is intentionally omitted for now.
     Hyperparameter search defaults to every ``tune_frame_stride``-th frame
     in ``[frame_min, frame_max]`` (e.g. 6, 11, …, 41).
+
+    ``tuning_loss`` selects the GridSearch angle term (``circular`` or ``sincos``).
+    ``model_out`` defaults to ``splits/detector_model.json`` (or
+    ``detector_model_sincos.json`` when ``tuning_loss='sincos'``).
     """
     pipeline_t0 = time.perf_counter()
     data_dir = Path(data_dir)
@@ -228,7 +249,10 @@ def train_pipeline(
         train_ids, test_ids = create_train_test_split(data_dir, split_path)
 
     print(f"Train discs: {len(train_ids)}, test discs: {len(test_ids)}")
-    print(f"Using frames {frame_min}–{frame_max} (tune stride={tune_frame_stride})")
+    print(
+        f"Using frames {frame_min}–{frame_max} "
+        f"(tune stride={tune_frame_stride}, tuning_loss={tuning_loss})"
+    )
 
     tune_t0 = time.perf_counter()
     tuned_params, _search_cv = tune_detector(
@@ -243,6 +267,7 @@ def train_pipeline(
         n_iter=n_iter,
         n_jobs=n_jobs,
         verbose=verbose,
+        tuning_loss=tuning_loss,
     )
     tune_elapsed = time.perf_counter() - tune_t0
     print(f"Hyperparameter search finished in {_format_duration(tune_elapsed)}")
@@ -274,6 +299,7 @@ def train_pipeline(
     )
 
     total_elapsed = time.perf_counter() - pipeline_t0
+    loss_name = TUNING_LOSS_NAMES[tuning_loss]
     artifact = {
         "params": detector.params,
         "train_discs": train_ids,
@@ -285,7 +311,7 @@ def train_pipeline(
         "target": "ablation_ring_outer",
         "ellipse_columns": ["BX", "BY", "Major", "Minor", "Angle"],
         "tuning_targets": ["BX", "BY", "Major", "Minor", "Angle"],
-        "tuning_loss": "mean_quadratic_ellipse_circular_angle",
+        "tuning_loss": loss_name,
         "tuning_score": tuned_params.get("tuning_score"),
         "cv_folds": tuned_params.get("cv_folds"),
         "search": tuned_params.get("search"),
@@ -295,7 +321,16 @@ def train_pipeline(
             "total": round(total_elapsed, 3),
         },
     }
-    artifact_path = split_path.parent / "detector_model.json"
+    if model_out is None:
+        filename = (
+            "detector_model_sincos.json"
+            if tuning_loss == "sincos"
+            else "detector_model.json"
+        )
+        artifact_path = split_path.parent / filename
+    else:
+        artifact_path = Path(model_out)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text(json.dumps(artifact, indent=2))
     print(f"\nSaved model artifact to {artifact_path}")
     print(f"Total training time: {_format_duration(total_elapsed)}")

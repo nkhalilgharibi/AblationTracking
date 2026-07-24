@@ -24,14 +24,16 @@ ANGLE_IDX = ELLIPSE_COLUMNS.index("Angle")
 
 # Hyperparameters exposed to GridSearch / RandomizedSearch.
 # Defaults match AblationEdgeDetector.DEFAULT_PARAMS where applicable.
+# Compact neighborhood around the circular-loss baseline so GridSearch can
+# re-select under an alternate tuning loss (e.g. sincos angle residual).
 DEFAULT_PARAM_GRID: dict[str, list[Any]] = {
-    "edge_blur": [7], #[7,11], #[9, 11],
-    "dark_threshold": [19], #[17,18,19], #[18, 22], #[10,12,14,16,18,20,22,24], #[20, 22, 24],
+    "edge_blur": [7, 9, 11],
+    "dark_threshold": [16, 18, 19, 20],
     "bright_threshold": [22],
     "use_adaptive_threshold": [False],
     "dark_run_mode": ["first"],
-    "min_dark_run": [5], #[4,5], #[4, 6],
-    "radius_outlier_sigma": [2.7], #[2.5, 3.0],
+    "min_dark_run": [4, 5],
+    "radius_outlier_sigma": [2.7],
     "center_max_area": [40000],
     "r_min": [70],
     "r_max": [200],
@@ -249,6 +251,48 @@ def ellipse_quadratic_scorer():
     """sklearn scorer: greater is better → negative full-ellipse quadratic loss."""
     return make_scorer(
         lambda y_true, y_pred: -ellipse_quadratic_loss(y_true, y_pred),
+        greater_is_better=True,
+    )
+
+
+def ellipse_quadratic_sincos_angle_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Mean quadratic loss on full ellipse ``[BX, BY, Major, Minor, Angle]``,
+    with Angle scored in the continuous 180°-period embedding used by the
+    hybrid CNN features (``sin(2θ)``, ``cos(2θ)``):
+
+    ``mean( dBX² + dBY² + dMajor² + dMinor²
+            + (sin2θ_pred − sin2θ_gt)² + (cos2θ_pred − cos2θ_gt)² )``.
+
+    Doubling the angle makes θ and θ+180° equivalent; the sin/cos pair avoids
+    a discontinuous jump in raw degrees across the wrap. Still fully quadratic.
+    """
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+    if y_true.shape != y_pred.shape:
+        raise ValueError(f"Shape mismatch: y_true {y_true.shape} vs y_pred {y_pred.shape}")
+    if y_true.ndim != 2 or y_true.shape[1] != len(ELLIPSE_COLUMNS):
+        raise ValueError(
+            f"Expected (n, {len(ELLIPSE_COLUMNS)}) ellipse vectors, got {y_true.shape}"
+        )
+
+    linear = y_pred[:, :ANGLE_IDX] - y_true[:, :ANGLE_IDX]
+    linear_sq = np.sum(linear**2, axis=1)
+
+    # Degrees → radians for 2θ embedding (ellipse orientation period 180°).
+    theta_pred = np.deg2rad(y_pred[:, ANGLE_IDX])
+    theta_true = np.deg2rad(y_true[:, ANGLE_IDX])
+    sin_err = np.sin(2.0 * theta_pred) - np.sin(2.0 * theta_true)
+    cos_err = np.cos(2.0 * theta_pred) - np.cos(2.0 * theta_true)
+    angle_sq = sin_err**2 + cos_err**2
+
+    return float(np.mean(linear_sq + angle_sq))
+
+
+def ellipse_quadratic_sincos_angle_scorer():
+    """sklearn scorer: greater is better → negative sincos-angle quadratic loss."""
+    return make_scorer(
+        lambda y_true, y_pred: -ellipse_quadratic_sincos_angle_loss(y_true, y_pred),
         greater_is_better=True,
     )
 

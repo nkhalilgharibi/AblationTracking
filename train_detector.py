@@ -50,6 +50,21 @@ def main() -> None:
         default=3,
         help="sklearn search verbosity (0–3; default: 3).",
     )
+    parser.add_argument(
+        "--tuning-loss",
+        choices=("circular", "sincos"),
+        default="circular",
+        help="GridSearch angle term: circular dAngle² (default) or "
+        "quadratic sin/cos(2θ) embedding residual (hybrid-style).",
+    )
+    parser.add_argument(
+        "--model-out",
+        type=Path,
+        default=None,
+        help="Path for saved detector JSON "
+        "(default: splits/detector_model.json, or "
+        "detector_model_sincos.json when --tuning-loss sincos).",
+    )
     args = parser.parse_args()
     train_pipeline(
         data_dir=args.data_dir,
@@ -63,6 +78,8 @@ def main() -> None:
         n_iter=args.n_iter,
         n_jobs=args.n_jobs,
         verbose=args.verbose,
+        tuning_loss=args.tuning_loss,
+        model_out=args.model_out,
     )
 
 
