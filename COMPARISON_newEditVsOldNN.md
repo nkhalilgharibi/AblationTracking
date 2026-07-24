@@ -1,11 +1,11 @@
 # Branch metrics comparison
 
-Evaluated on the shared disc-level split (**78** train / **20** test discs), frames **6–45**, using each branch’s checked-in artifacts (no retrain for withNN rows).
+Evaluated on the shared disc-level split (**78** train / **20** test discs), frames **6–45**.
 
-- **newEdit (circular)**: classical OpenCV detector tuned with circular `ΔAngle²` GridSearch loss (`detector_model.json`, no Ridge).
-- **newEdit (sincos)**: same classical stack retuned with quadratic sin/cos(2θ) angle residual (`detector_model_sincos.json`).
-- **withNN (hybrid)**: classical + CNN residual (`hybrid_model.pt`).
-- **withNN (classical only)**: same branch classical detector without CNN.
+- **newEdit (circular)**: classical OpenCV detector tuned with circular `ΔAngle²` (`detector_model.json`).
+- **newEdit (sincos)**: classical retuned with quadratic sin/cos(2θ) angle residual (`detector_model_sincos.json`).
+- **newEdit-withNN hybrid**: this branch’s classical (sincos artifact) + modular CNN residual (`hybrid_model.pt`); equal-weight quadratic sincos loss.
+- **withNN (hybrid / classical)**: older branch artifacts (unchanged reference).
 
 Metrics: MAE = mean absolute error; RMSE from signed residuals (Angle uses shortest circular residual on a 180° period).
 
@@ -13,10 +13,11 @@ Metrics: MAE = mean absolute error; RMSE from signed residuals (Angle uses short
 
 | Branch | Test n | Det% | MAE Major | RMSE Major | MAE Minor | RMSE Minor | MAE Angle | RMSE Angle |
 |--------|--------|------|-----------|------------|-----------|------------|-----------|------------|
-| feature/ablation-edge-detector-newEdit (circular ΔAngle²) | 800 | 100.0% | 14.06 | 19.47 | 9.96 | 12.62 | 35.48 | 43.11 |
-| feature/ablation-edge-detector-newEdit (sincos 2θ quadratic) | 800 | 100.0% | 14.12 | 19.60 | 10.05 | 12.83 | 35.38 | 43.22 |
-| feature/ablation-edge-detector-withNN (hybrid) | 800 | 100.0% | 13.82 | 17.96 | 8.12 | 10.22 | 11.65 | 15.99 |
-| feature/ablation-edge-detector-withNN (classical only) | 800 | 100.0% | 16.53 | 22.32 | 11.53 | 15.15 | 38.50 | 45.99 |
+| newEdit (circular ΔAngle²) | 800 | 100.0% | 14.06 | 19.47 | 9.96 | 12.62 | 35.48 | 43.11 |
+| newEdit (sincos 2θ quadratic) | 800 | 100.0% | 14.12 | 19.60 | 10.05 | 12.83 | 35.38 | 43.22 |
+| newEdit-withNN hybrid (sincos quadratic CNN) | 800 | 100.0% | 14.69 | 19.20 | 8.50 | 10.92 | 11.27 | 16.08 |
+| withNN (hybrid) | 800 | 100.0% | 13.82 | 17.96 | 8.12 | 10.22 | 11.65 | 15.99 |
+| withNN (classical only) | 800 | 100.0% | 16.53 | 22.32 | 11.53 | 15.15 | 38.50 | 45.99 |
 
 ---
 
@@ -49,8 +50,8 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 
 ## feature/ablation-edge-detector-newEdit (sincos 2θ quadratic)
 
-Tuning loss: `mean(dBX²+dBY²+dMajor²+dMinor²+(sin2θ_pred−sin2θ_gt)²+(cos2θ_pred−cos2θ_gt)²)` — same continuous 180° angle encoding as the hybrid CNN features, still quadratic.  
-Artifact: `splits/detector_model_sincos.json` (`edge_blur=9`, `dark_threshold=19`, `min_dark_run=4`; CV loss 874.22 on stride-5 tune set).
+Tuning loss: `mean(dBX²+dBY²+dMajor²+dMinor²+(sin2θ_pred−sin2θ_gt)²+(cos2θ_pred−cos2θ_gt)²)`.  
+Artifact: `splits/detector_model_sincos.json` (`edge_blur=9`, `dark_threshold=19`, `min_dark_run=4`).
 
 Train samples: **3120** (detected 3120 / 3120, 100.0%)
 
@@ -71,6 +72,35 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 | Major | 14.12 | 19.60 |
 | Minor | 10.05 | 12.83 |
 | Angle | 35.38 | 43.22 |
+
+---
+
+## feature/ablation-edge-detector-newEdit-withNN (hybrid)
+
+Classical base: `splits/detector_model_sincos.json` (this branch).  
+CNN: modular encoder `(32,64,128)`, MLP `(128,64)`, dropout `0.2`.  
+Train loss: equal-weight quadratic refined-vs-GT with sin/cos(2θ).  
+Artifacts: `splits/hybrid_model.pt`, `splits/hybrid_model.json`.
+
+Train samples: **3120** (detected 3120 / 3120, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.90 | 12.19 |
+| BY | 3.38 | 4.92 |
+| Major | 11.39 | 15.48 |
+| Minor | 7.61 | 11.07 |
+| Angle | 6.88 | 13.24 |
+
+Test samples: **800** (detected 800 / 800, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.73 | 8.06 |
+| BY | 3.37 | 4.35 |
+| Major | 14.69 | 19.20 |
+| Minor | 8.50 | 10.92 |
+| Angle | 11.27 | 16.08 |
 
 ---
 
