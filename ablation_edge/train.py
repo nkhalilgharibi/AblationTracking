@@ -37,8 +37,8 @@ SearchMode = Literal["grid", "random"]
 TuningLoss = Literal["circular", "sincos"]
 
 TUNING_LOSS_NAMES: dict[TuningLoss, str] = {
-    "circular": "mean_quadratic_ellipse_circular_angle",
-    "sincos": "mean_quadratic_ellipse_sincos_angle",
+    "circular": "mean_quadratic_ellipse_circular_angle_norm512",
+    "sincos": "mean_quadratic_ellipse_sincos_angle_norm512",
 }
 
 
@@ -312,6 +312,7 @@ def train_pipeline(
         "ellipse_columns": ["BX", "BY", "Major", "Minor", "Angle"],
         "tuning_targets": ["BX", "BY", "Major", "Minor", "Angle"],
         "tuning_loss": loss_name,
+        "image_size_norm": 512.0,
         "tuning_score": tuned_params.get("tuning_score"),
         "cv_folds": tuned_params.get("cv_folds"),
         "search": tuned_params.get("search"),

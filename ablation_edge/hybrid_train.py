@@ -127,6 +127,7 @@ def train_hybrid_refiner(
     max_test_samples: int | None = None,
     device: str | None = None,
     val_fraction: float = 0.15,
+    model_basename: str = "hybrid_model",
 ) -> dict[str, Any]:
     torch = _require_torch()
     from torch.utils.data import DataLoader, random_split
@@ -201,8 +202,8 @@ def train_hybrid_refiner(
 
     best_val = float("inf")
     history: list[dict[str, float]] = []
-    checkpoint_path = output_dir / "hybrid_model.pt"
-    config_path = output_dir / "hybrid_model.json"
+    checkpoint_path = output_dir / f"{model_basename}.pt"
+    config_path = output_dir / f"{model_basename}.json"
 
     for epoch in range(1, epochs + 1):
         model.train()

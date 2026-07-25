@@ -2,10 +2,12 @@
 
 Evaluated on the shared disc-level split (**78** train / **20** test discs), frames **6–45**.
 
-- **newEdit (circular)**: classical OpenCV detector tuned with circular `ΔAngle²` (`detector_model.json`).
-- **newEdit (sincos)**: classical retuned with quadratic sin/cos(2θ) angle residual (`detector_model_sincos.json`).
-- **newEdit-withNN hybrid**: this branch’s classical (sincos artifact) + modular CNN residual (`hybrid_model.pt`); equal-weight quadratic sincos loss.
-- **withNN (hybrid / classical)**: older branch artifacts (unchanged reference).
+- **newEdit (circular)**: classical tuned with circular `ΔAngle²` (`detector_model.json`).
+- **newEdit (sincos)**: classical with quadratic sin/cos(2θ), **unnormalized** geometry (`detector_model_sincos.json`).
+- **newEdit (sincos, norm512)**: classical with geometry `/512` + sin/cos(2θ) (`detector_model_sincos_norm512.json`).
+- **newEdit-withNN hybrid**: CNN on unnormalized-sincos classical (`hybrid_model.pt`).
+- **newEdit-withNN hybrid (norm512)**: CNN on norm512 classical (`hybrid_model_norm512.pt`).
+- **withNN (hybrid / classical)**: older branch reference.
 
 Metrics: MAE = mean absolute error; RMSE from signed residuals (Angle uses shortest circular residual on a 180° period).
 
@@ -14,8 +16,10 @@ Metrics: MAE = mean absolute error; RMSE from signed residuals (Angle uses short
 | Branch | Test n | Det% | MAE Major | RMSE Major | MAE Minor | RMSE Minor | MAE Angle | RMSE Angle |
 |--------|--------|------|-----------|------------|-----------|------------|-----------|------------|
 | newEdit (circular ΔAngle²) | 800 | 100.0% | 14.06 | 19.47 | 9.96 | 12.62 | 35.48 | 43.11 |
-| newEdit (sincos 2θ quadratic) | 800 | 100.0% | 14.12 | 19.60 | 10.05 | 12.83 | 35.38 | 43.22 |
-| newEdit-withNN hybrid (sincos quadratic CNN) | 800 | 100.0% | 14.69 | 19.20 | 8.50 | 10.92 | 11.27 | 16.08 |
+| newEdit (sincos, unnormalized) | 800 | 100.0% | 14.12 | 19.60 | 10.05 | 12.83 | 35.38 | 43.22 |
+| newEdit (sincos, norm512) | 800 | 100.0% | 13.22 | 19.96 | 9.27 | 11.98 | 34.15 | 41.74 |
+| newEdit-withNN hybrid (on unnormalized sincos) | 800 | 100.0% | 14.69 | 19.20 | 8.50 | 10.92 | 11.27 | 16.08 |
+| newEdit-withNN hybrid (on norm512 classical) | 800 | 100.0% | 13.07 | 18.01 | 8.81 | 11.36 | 10.49 | 13.93 |
 | withNN (hybrid) | 800 | 100.0% | 13.82 | 17.96 | 8.12 | 10.22 | 11.65 | 15.99 |
 | withNN (classical only) | 800 | 100.0% | 16.53 | 22.32 | 11.53 | 15.15 | 38.50 | 45.99 |
 
@@ -48,9 +52,9 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 
 ---
 
-## feature/ablation-edge-detector-newEdit (sincos 2θ quadratic)
+## feature/ablation-edge-detector-newEdit (sincos, unnormalized)
 
-Tuning loss: `mean(dBX²+dBY²+dMajor²+dMinor²+(sin2θ_pred−sin2θ_gt)²+(cos2θ_pred−cos2θ_gt)²)`.  
+Tuning loss: `mean(dBX²+dBY²+dMajor²+dMinor²+(Δsin2θ)²+(Δcos2θ)²)`.  
 Artifact: `splits/detector_model_sincos.json` (`edge_blur=9`, `dark_threshold=19`, `min_dark_run=4`).
 
 Train samples: **3120** (detected 3120 / 3120, 100.0%)
@@ -75,11 +79,36 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 
 ---
 
-## feature/ablation-edge-detector-newEdit-withNN (hybrid)
+## feature/ablation-edge-detector-newEdit (sincos, norm512)
 
-Classical base: `splits/detector_model_sincos.json` (this branch).  
-CNN: modular encoder `(32,64,128)`, MLP `(128,64)`, dropout `0.2`.  
-Train loss: equal-weight quadratic refined-vs-GT with sin/cos(2θ).  
+Tuning loss: `mean((dBX/512)²+(dBY/512)²+(dMajor/512)²+(dMinor/512)²+(Δsin2θ)²+(Δcos2θ)²)`.  
+Artifact: `splits/detector_model_sincos_norm512.json` (`edge_blur=11`, `dark_threshold=16`, `min_dark_run=4`).
+
+Train samples: **3120** (detected 3120 / 3120, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.61 | 15.11 |
+| BY | 3.49 | 5.65 |
+| Major | 14.96 | 22.99 |
+| Minor | 8.60 | 12.75 |
+| Angle | 27.44 | 34.59 |
+
+Test samples: **800** (detected 800 / 800, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 4.96 | 6.40 |
+| BY | 2.59 | 3.43 |
+| Major | 13.22 | 19.96 |
+| Minor | 9.27 | 11.98 |
+| Angle | 34.15 | 41.74 |
+
+---
+
+## feature/ablation-edge-detector-newEdit-withNN (hybrid on unnormalized sincos)
+
+Classical base: `splits/detector_model_sincos.json`.  
 Artifacts: `splits/hybrid_model.pt`, `splits/hybrid_model.json`.
 
 Train samples: **3120** (detected 3120 / 3120, 100.0%)
@@ -101,6 +130,34 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 | Major | 14.69 | 19.20 |
 | Minor | 8.50 | 10.92 |
 | Angle | 11.27 | 16.08 |
+
+---
+
+## feature/ablation-edge-detector-newEdit-withNN (hybrid on norm512 classical)
+
+Classical base: `splits/detector_model_sincos_norm512.json`.  
+CNN: encoder `(32,64,128)`, MLP `(128,64)`, dropout `0.2`.  
+Artifacts: `splits/hybrid_model_norm512.pt`, `splits/hybrid_model_norm512.json`.
+
+Train samples: **3120** (detected 3120 / 3120, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.89 | 11.17 |
+| BY | 3.07 | 4.57 |
+| Major | 11.41 | 15.93 |
+| Minor | 7.36 | 11.02 |
+| Angle | 6.62 | 12.10 |
+
+Test samples: **800** (detected 800 / 800, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.58 | 7.64 |
+| BY | 2.82 | 3.71 |
+| Major | 13.07 | 18.01 |
+| Minor | 8.81 | 11.36 |
+| Angle | 10.49 | 13.93 |
 
 ---
 

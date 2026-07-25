@@ -192,6 +192,11 @@ def _major_minor_columns(y: np.ndarray) -> np.ndarray:
     )
 
 
+# Geometry residuals are divided by this before squaring so they sit on a
+# similar scale to the sin/cos(2θ) angle terms (all frames are 512×512).
+IMAGE_SIZE_NORM = 512.0
+
+
 # --- Previous cost (Major/Minor only). Keep for easy rollback. ---
 # def major_minor_quadratic_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 #     """
@@ -222,11 +227,11 @@ def _major_minor_columns(y: np.ndarray) -> np.ndarray:
 def ellipse_quadratic_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
     Mean quadratic loss on full ellipse ``[BX, BY, Major, Minor, Angle]``:
-    ``mean( dBX² + dBY² + dMajor² + dMinor² + dAngle² )``.
 
-    ``Angle`` is already Fiji-convention (clockwise deg from +x, [0, 180)),
-    matching ground truth. Residuals use the shortest circular difference on
-    the 180° ellipse-orientation period (via ``_angle_diff``).
+    ``mean( (dBX/S)² + (dBY/S)² + (dMajor/S)² + (dMinor/S)² + dAngle² )``
+
+    with ``S = IMAGE_SIZE_NORM`` (512). Angle uses the shortest circular
+    difference on the 180° ellipse-orientation period (via ``_angle_diff``).
     """
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
@@ -238,6 +243,7 @@ def ellipse_quadratic_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
         )
 
     residuals = y_pred - y_true
+    residuals[:, :ANGLE_IDX] /= IMAGE_SIZE_NORM
     # Circular angle residual (unsigned shortest arc on [0, 180)).
     angle_err = np.asarray(
         [_angle_diff(float(p), float(t)) for p, t in zip(y_pred[:, ANGLE_IDX], y_true[:, ANGLE_IDX])],
@@ -258,14 +264,11 @@ def ellipse_quadratic_scorer():
 def ellipse_quadratic_sincos_angle_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
     Mean quadratic loss on full ellipse ``[BX, BY, Major, Minor, Angle]``,
-    with Angle scored in the continuous 180°-period embedding used by the
-    hybrid CNN features (``sin(2θ)``, ``cos(2θ)``):
+    with geometry normalized by ``IMAGE_SIZE_NORM`` (512) and Angle scored in
+    the continuous 180°-period embedding (``sin(2θ)``, ``cos(2θ)``):
 
-    ``mean( dBX² + dBY² + dMajor² + dMinor²
+    ``mean( (dBX/S)² + (dBY/S)² + (dMajor/S)² + (dMinor/S)²
             + (sin2θ_pred − sin2θ_gt)² + (cos2θ_pred − cos2θ_gt)² )``.
-
-    Doubling the angle makes θ and θ+180° equivalent; the sin/cos pair avoids
-    a discontinuous jump in raw degrees across the wrap. Still fully quadratic.
     """
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
@@ -276,7 +279,7 @@ def ellipse_quadratic_sincos_angle_loss(y_true: np.ndarray, y_pred: np.ndarray) 
             f"Expected (n, {len(ELLIPSE_COLUMNS)}) ellipse vectors, got {y_true.shape}"
         )
 
-    linear = y_pred[:, :ANGLE_IDX] - y_true[:, :ANGLE_IDX]
+    linear = (y_pred[:, :ANGLE_IDX] - y_true[:, :ANGLE_IDX]) / IMAGE_SIZE_NORM
     linear_sq = np.sum(linear**2, axis=1)
 
     # Degrees → radians for 2θ embedding (ellipse orientation period 180°).

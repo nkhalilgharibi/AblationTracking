@@ -38,6 +38,13 @@ def main() -> None:
         help="Classical detector artifact (default: sincos-tuned model).",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("splits"))
+    parser.add_argument(
+        "--model-basename",
+        type=str,
+        default="hybrid_model",
+        help="Checkpoint/config stem under --output-dir "
+        "(default: hybrid_model → hybrid_model.pt / .json).",
+    )
     parser.add_argument("--crop-size", type=int, default=256)
     parser.add_argument(
         "--encoder-channels",
@@ -82,6 +89,7 @@ def main() -> None:
         max_train_samples=400 if args.quick else None,
         max_test_samples=200 if args.quick else None,
         device=args.device,
+        model_basename=args.model_basename,
     )
 
 
