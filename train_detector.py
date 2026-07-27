@@ -27,9 +27,9 @@ def main() -> None:
     parser.add_argument(
         "--cv",
         type=int,
-        default=3,
+        default=4,
         dest="cv_folds",
-        help="GroupKFold folds over discs (default: 3).",
+        help="GroupKFold folds over discs (default: 4).",
     )
     parser.add_argument(
         "--search",
@@ -51,19 +51,10 @@ def main() -> None:
         help="sklearn search verbosity (0–3; default: 3).",
     )
     parser.add_argument(
-        "--tuning-loss",
-        choices=("circular", "sincos"),
-        default="circular",
-        help="GridSearch angle term: circular dAngle² (default) or "
-        "quadratic sin/cos(2θ) embedding residual (hybrid-style).",
-    )
-    parser.add_argument(
         "--model-out",
         type=Path,
-        default=None,
-        help="Path for saved detector JSON "
-        "(default: splits/detector_model.json, or "
-        "detector_model_sincos.json when --tuning-loss sincos).",
+        default=Path("splits/detector_model.json"),
+        help="Path for saved detector JSON (default: splits/detector_model.json).",
     )
     args = parser.parse_args()
     train_pipeline(
@@ -78,7 +69,6 @@ def main() -> None:
         n_iter=args.n_iter,
         n_jobs=args.n_jobs,
         verbose=args.verbose,
-        tuning_loss=args.tuning_loss,
         model_out=args.model_out,
     )
 

@@ -12,11 +12,16 @@ from typing import Any, Sequence
 import numpy as np
 
 from .data import GT_COLUMNS, canonicalize_fiji_ellipse_params, crop_box, crop_image
-from .detector import AblationEdgeDetector, EllipseResult, _angle_residual
+from .detector import AblationEdgeDetector, EllipseResult
 
 DEFAULT_ENCODER_CHANNELS: tuple[int, ...] = (32, 64, 128)
 DEFAULT_MLP_HIDDEN: tuple[int, ...] = (128, 64)
 DEFAULT_DROPOUT = 0.2
+
+
+def _angle_residual(gt_angle: float, raw_angle: float) -> float:
+    """Signed angle residual in (−90°, 90°] on the 180° ellipse period."""
+    return float((gt_angle - raw_angle + 90.0) % 180.0 - 90.0)
 
 
 def build_hybrid_refiner(
@@ -216,7 +221,7 @@ class HybridEllipsePredictor:
         self,
         checkpoint_path: Path | str,
         detector: AblationEdgeDetector | None = None,
-        detector_model_path: Path | str = "splits/detector_model_sincos.json",
+        detector_model_path: Path | str = "splits/detector_model.json",
         *,
         device: str | None = None,
     ) -> None:
@@ -248,7 +253,17 @@ class HybridEllipsePredictor:
         self.model.to(self.device)
         self.model.eval()
 
-        det_path = payload.get("detector_model", detector_model_path)
+        det_path = detector_model_path or payload.get("detector_model", "splits/detector_model.json")
+        # Prefer an existing path if the checkpoint records a renamed/legacy artifact.
+        candidates = [
+            Path(detector_model_path),
+            Path(payload.get("detector_model", "splits/detector_model.json")),
+            Path("splits/detector_model.json"),
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                det_path = candidate
+                break
         self.detector = detector or load_trained_detector(det_path)
 
     def reset_temporal_state(self) -> None:

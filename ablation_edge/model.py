@@ -10,7 +10,7 @@ from sklearn.metrics import make_scorer
 from sklearn.pipeline import Pipeline
 
 from .data import GT_COLUMNS, Sample, load_gray_image
-from .detector import AblationEdgeDetector, EllipseResult, _angle_diff
+from .detector import AblationEdgeDetector, EllipseResult
 
 # Full OpenCV / Fiji ellipse vector kept for visualization & evaluation.
 # Order: BX, BY, Major, Minor, Angle (Angle = clockwise deg from +x).
@@ -24,8 +24,6 @@ ANGLE_IDX = ELLIPSE_COLUMNS.index("Angle")
 
 # Hyperparameters exposed to GridSearch / RandomizedSearch.
 # Defaults match AblationEdgeDetector.DEFAULT_PARAMS where applicable.
-# Compact neighborhood around the circular-loss baseline so GridSearch can
-# re-select under an alternate tuning loss (e.g. sincos angle residual).
 DEFAULT_PARAM_GRID: dict[str, list[Any]] = {
     "edge_blur": [7, 9, 11],
     "dark_threshold": [16, 18, 19, 20],
@@ -222,43 +220,6 @@ IMAGE_SIZE_NORM = 512.0
 #         lambda y_true, y_pred: -major_minor_quadratic_loss(y_true, y_pred),
 #         greater_is_better=True,
 #     )
-
-
-def ellipse_quadratic_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """
-    Mean quadratic loss on full ellipse ``[BX, BY, Major, Minor, Angle]``:
-
-    ``mean( (dBX/S)² + (dBY/S)² + (dMajor/S)² + (dMinor/S)² + dAngle² )``
-
-    with ``S = IMAGE_SIZE_NORM`` (512). Angle uses the shortest circular
-    difference on the 180° ellipse-orientation period (via ``_angle_diff``).
-    """
-    y_true = np.asarray(y_true, dtype=np.float64)
-    y_pred = np.asarray(y_pred, dtype=np.float64)
-    if y_true.shape != y_pred.shape:
-        raise ValueError(f"Shape mismatch: y_true {y_true.shape} vs y_pred {y_pred.shape}")
-    if y_true.ndim != 2 or y_true.shape[1] != len(ELLIPSE_COLUMNS):
-        raise ValueError(
-            f"Expected (n, {len(ELLIPSE_COLUMNS)}) ellipse vectors, got {y_true.shape}"
-        )
-
-    residuals = y_pred - y_true
-    residuals[:, :ANGLE_IDX] /= IMAGE_SIZE_NORM
-    # Circular angle residual (unsigned shortest arc on [0, 180)).
-    angle_err = np.asarray(
-        [_angle_diff(float(p), float(t)) for p, t in zip(y_pred[:, ANGLE_IDX], y_true[:, ANGLE_IDX])],
-        dtype=np.float64,
-    )
-    residuals[:, ANGLE_IDX] = angle_err
-    return float(np.mean(np.sum(residuals**2, axis=1)))
-
-
-def ellipse_quadratic_scorer():
-    """sklearn scorer: greater is better → negative full-ellipse quadratic loss."""
-    return make_scorer(
-        lambda y_true, y_pred: -ellipse_quadratic_loss(y_true, y_pred),
-        greater_is_better=True,
-    )
 
 
 def ellipse_quadratic_sincos_angle_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:

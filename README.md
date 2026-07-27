@@ -1,12 +1,19 @@
-# Using the ablation edge detector with new data
+# Using the ablation edge detector
 
-This project fits Fiji-style ellipses to annular ablation microscopy frames and compares them to ImageJ Results CSVs.
+This project fits Fiji-style ellipses to annular ablation microscopy frames and compares them to ImageJ Results CSVs. The kept pipeline is:
+
+1. **Classical** OpenCV ring fit (`splits/detector_model.json`) — GridSearch with geometry `/512` and sin/cos(2θ) angle loss  
+2. **Hybrid** CNN residual on top (`splits/hybrid_model.pt`) — optional refinement of the classical ellipse  
+
+See [SUMMARY.md](SUMMARY.md) for what was tried and why this recipe was kept.
 
 ## Setup
 
 ```bash
 cd AblationTracking
 python3 -m pip install -r requirements.txt
+# Hybrid CNN also needs PyTorch:
+python3 -m pip install torch
 ```
 
 Default data folder is `Data/` at the repo root. Override with `--data-dir` on the CLIs below.
@@ -42,13 +49,6 @@ Export Fiji / ImageJ **Fit Ellipse** Results with at least these columns:
 
 `BX`/`BY` are the **upper-left** of the axis-aligned bounding box (Fiji convention). The code converts them to the ellipse center internally.
 
-Example header:
-
-```text
- ,Area,Perim.,BX,BY,Width,Height,Major,Minor,Angle
-1,…
-```
-
 ### Frame pairing (important)
 
 TIFF numbers are from the start of the movie. CSV row indices are for the ablation window only.
@@ -62,7 +62,7 @@ TIFF numbers are from the start of the movie. CSV row indices are for the ablati
 | … | … |
 | 40 | `…_frame0045.tif` |
 
-By default the tools only use image frames **6–45** (`DEFAULT_FRAME_MIN` / `DEFAULT_FRAME_MAX` in `ablation_edge/data.py`). If your window differs, pass `--frame-min` / `--frame-max` (and keep CSV indices consistent with the same offset of 5, or change `CSV_TO_IMAGE_FRAME_OFFSET` in code).
+By default the tools only use image frames **6–45**. If your window differs, pass `--frame-min` / `--frame-max` (and keep CSV indices consistent with the same offset of 5, or change `CSV_TO_IMAGE_FRAME_OFFSET` in `ablation_edge/data.py`).
 
 ## Adding a new disc
 
@@ -78,9 +78,7 @@ python3 disc_viewer.py 202302140302 --data-dir Data
 ```
 
 Controls: enter disc ID → **Load**, then slider / ← → to step frames.  
-Overlays: **green** = Fiji GT, **red** = detector, **yellow** = Fiji CSV bounding box.
-
-Optional flags:
+Overlays: **green** = Fiji GT, **red** = classical detector, **yellow** = Fiji CSV bounding box.
 
 ```bash
 python3 disc_viewer.py discYYYYMMDDNNNN \
@@ -90,7 +88,7 @@ python3 disc_viewer.py discYYYYMMDDNNNN \
   --frame-max 45
 ```
 
-## Running the detector without the viewer
+## Classical inference (Python)
 
 ```python
 from pathlib import Path
@@ -116,49 +114,81 @@ for sample in AblationDataset("Data", ["disc202302140302"]):
     pred = detector.detect(image, temporal_smooth=True)
 ```
 
-## Retraining after adding many new discs
+## Hybrid inference (Python)
 
-If you add a substantial amount of new labeled data and want updated hyperparameters / split:
+Requires PyTorch. Classical fit first, then CNN residual:
+
+```python
+from pathlib import Path
+from ablation_edge.data import load_gray_image
+from ablation_edge.hybrid_refine import HybridEllipsePredictor
+
+predictor = HybridEllipsePredictor(
+    checkpoint_path="splits/hybrid_model.pt",
+    detector_model_path="splits/detector_model.json",
+)
+image = load_gray_image(Path("Data/disc202302140302_frame0006.tif"))
+result = predictor.detect(image)  # Fiji-style EllipseResult after CNN residual
+print(result)
+```
+
+## Retrain classical detector
+
+After adding many new labeled discs:
 
 ```bash
-# Deletes / regenerates split only if you remove the existing file first,
-# or point --split-path at a new file.
-rm -f splits/train_test_split.json   # optional: force a new disc-level split
+# Optional: force a new disc-level split
+rm -f splits/train_test_split.json
 
 python3 train_detector.py \
   --data-dir Data \
   --split-path splits/train_test_split.json \
-  --tune-samples 400 \
   --tune-frame-stride 5 \
-  --cv 3 \
+  --cv 4 \
   --search grid \
+  --model-out splits/detector_model.json \
   --frame-min 6 \
   --frame-max 45
 ```
 
-Tuning uses sklearn `GridSearchCV` (or `--search random` → `RandomizedSearchCV`) with
-**GroupKFold** over discs so frames from the same movie stay in one fold.
-By default only every 5th frame in 6–45 is used for the search
-(`6, 11, 16, 21, 26, 31, 36, 41`; override with `--tune-frame-stride`, or `1` for all frames).
-The search loss is mean quadratic error on all ellipse params
-`[BX, BY, Major, Minor, Angle]`:
-`mean( (ΔBX)² + (ΔBY)² + (ΔMajor)² + (ΔMinor)² + (ΔAngle)² )`,
-where `ΔAngle` is the shortest circular difference on the 180° period.
-(OpenCV `fitEllipse` angle is converted to Fiji clockwise-from-+x before scoring.)
+Tuning uses `GridSearchCV` with **GroupKFold** over discs (no frame leakage).  
+Default search uses every 5th frame in 6–45. Loss is:
 
-This writes:
+`mean( (ΔBX/512)² + (ΔBY/512)² + (ΔMajor/512)² + (ΔMinor/512)² + (Δsin2θ)² + (Δcos2θ)² )`
 
-- `splits/train_test_split.json` — disc-level train/test IDs (no frame leakage)
-- `splits/detector_model.json` — tuned detector settings (used by the viewer)
+Writes / updates:
 
-You can then re-open `disc_viewer.py`; it loads the new model by default.
+- `splits/train_test_split.json` — disc-level train/test IDs  
+- `splits/detector_model.json` — tuned OpenCV params  
+
+## Retrain hybrid CNN
+
+After the classical model is updated (or when you want a fresh residual net):
+
+```bash
+python3 train_hybrid.py \
+  --detector-model splits/detector_model.json \
+  --model-basename hybrid_model \
+  --encoder-channels 32,64,128 \
+  --mlp-hidden 128,64 \
+  --epochs 30
+```
+
+Default architecture matches the kept checkpoint: encoder `(32,64,128)`, MLP `(128,64)`.  
+Writes `splits/hybrid_model.pt` and `splits/hybrid_model.json`.
+
+Smoke test:
+
+```bash
+python3 train_hybrid.py --quick
+```
 
 ## Checklist for new data
 
 - [ ] Files named `disc… .csv` and `disc…_frameXXXX.tif` with the **same** disc id  
 - [ ] CSV has `BX`, `BY`, `Major`, `Minor`, `Angle` (and ideally `Width`, `Height`)  
 - [ ] CSV row `1` matches TIFF frame `6` (or adjust frame range / offset)  
-- [ ] Frames of interest are present on disk for the range you pass to `--frame-min` / `--frame-max`  
+- [ ] Frames of interest are present for `--frame-min` / `--frame-max`  
 - [ ] Viewer GT (green) looks correctly aligned before trusting metrics or retraining  
 
 ## Troubleshooting
@@ -168,4 +198,5 @@ You can then re-open `disc_viewer.py`; it loads the new model by default.
 | No labeled frames / empty viewer | CSV↔TIFF pairing wrong, or frames outside 6–45 |
 | GT ellipse far from the ring | Wrong CSV for that disc, or BX/BY not Fiji bbox upper-left |
 | Disc not found | ID typo; must match `disc*.csv` stem |
-| Import / dependency errors | `pip install -r requirements.txt` from repo root |
+| Import / dependency errors | `pip install -r requirements.txt` (+ `torch` for hybrid) |
+| Hybrid import fails | Install PyTorch: `pip install torch` |

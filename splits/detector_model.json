@@ -5,8 +5,8 @@
     "morph_kernel": 2,
     "morph_iterations": 4,
     "min_area": 5000,
-    "edge_blur": 7,
-    "dark_threshold": 19,
+    "edge_blur": 11,
+    "dark_threshold": 16,
     "bright_threshold": 22,
     "use_adaptive_threshold": false,
     "dark_percentile": 65.0,
@@ -14,7 +14,7 @@
     "r_min": 70,
     "r_max": 200,
     "n_angles": 180,
-    "min_dark_run": 5,
+    "min_dark_run": 4,
     "dark_run_mode": "first",
     "extremity_sectors": 36,
     "use_arc_tips": true,
@@ -134,7 +134,7 @@
   ],
   "frame_min": 6,
   "frame_max": 45,
-  "tune_frame_stride": 1,
+  "tune_frame_stride": 5,
   "coordinate_system": "ellipse_center",
   "target": "ablation_ring_outer",
   "ellipse_columns": [
@@ -151,13 +151,13 @@
     "Minor",
     "Angle"
   ],
-  "tuning_loss": "mean_quadratic_ellipse_circular_angle",
-  "tuning_score": 2156.11348745141,
+  "tuning_loss": "mean_quadratic_ellipse_sincos_angle_norm512",
+  "image_size_norm": 512.0,
+  "tuning_score": 1.0510059098799143,
   "cv_folds": 4,
   "search": "grid",
-  "correction_enabled": false,
   "timing_seconds": {
-    "hyperparameter_search": 493.606,
-    "total": 1113.166
+    "hyperparameter_search": 2314.261,
+    "total": 2983.057
   }
 }

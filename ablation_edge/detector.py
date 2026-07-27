@@ -7,9 +7,6 @@ from typing import Any
 
 import cv2
 import numpy as np
-from sklearn.linear_model import Ridge
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 from .data import GT_COLUMNS, canonicalize_fiji_ellipse_params, fiji_angle_from_axis_vector
 
@@ -155,10 +152,6 @@ def _angle_diff(a: float, b: float) -> float:
     return min(diff, 180.0 - diff)
 
 
-def _angle_residual(gt_angle: float, raw_angle: float) -> float:
-    return float((gt_angle - raw_angle + 90.0) % 180.0 - 90.0)
-
-
 def _signed_angle_delta(angle: float, reference: float) -> float:
     """Signed difference angle − reference in (−90°, 90°] (180° period)."""
     return float((float(angle) - float(reference) + 90.0) % 180.0 - 90.0)
@@ -209,8 +202,6 @@ class AblationEdgeDetector:
     3. Fit an ellipse to those points (two-pass center refine)
 
     Training tunes classical hyperparameters via sklearn search (see ``ablation_edge.model``).
-    Optional Ridge residual correction remains available on this class but is not used
-    by the current train pipeline.
     """
 
     DEFAULT_PARAMS: dict[str, Any] = {
@@ -251,23 +242,8 @@ class AblationEdgeDetector:
         "temporal_alpha": 0.45,
     }
 
-    FEATURE_NAMES = [
-        "raw_BX",
-        "raw_BY",
-        "raw_Major",
-        "raw_Minor",
-        "raw_Angle",
-        "raw_sin2A",
-        "raw_cos2A",
-        "img_mean",
-        "img_std",
-        "dark_fraction",
-    ]
-    TARGET_NAMES = GT_COLUMNS
-
     def __init__(self, refine_edges: bool = False, **params: Any) -> None:
         self.params = {**self.DEFAULT_PARAMS, **params}
-        self.correction_model: Pipeline | None = None
         self.refine_edges = refine_edges
         self._prev_ellipse: dict[str, float] | None = None
         self._prev_dark_threshold: float | None = None
@@ -288,15 +264,12 @@ class AblationEdgeDetector:
         if fitted is None:
             return None
 
-        if self.correction_model is not None:
-            fitted = self._apply_correction(image, fitted)
-
         if temporal_smooth:
             alpha = float(self.params.get("temporal_alpha", 0.35))
             fitted = _ema_ellipse(fitted, self._prev_ellipse, alpha)
             self._prev_ellipse = {key: fitted[key] for key in GT_COLUMNS}
 
-        method = "corrected" if self.correction_model else "ring"
+        method = "ring"
         if temporal_smooth and float(self.params.get("temporal_alpha", 0.35)) < 1.0:
             method = f"{method}_stable"
         return EllipseResult(**fitted, method=method, confidence=float(confidence))
@@ -305,39 +278,6 @@ class AblationEdgeDetector:
         """Detect a time series with temporal EMA smoothing (stable within a disc)."""
         self.reset_temporal_state()
         return [self.detect(image, temporal_smooth=True) for image in images]
-
-    def fit_correction(self, images: list[np.ndarray], ground_truths: list[dict[str, float]]) -> None:
-        """Train a residual Ridge model: predict Fiji − raw for all five parameters."""
-        features: list[list[float]] = []
-        targets: list[list[float]] = []
-
-        for image, gt in zip(images, ground_truths):
-            raw = self._best_raw_detection(image)
-            if raw is None:
-                continue
-            features.append(self._feature_vector(image, raw))
-            targets.append(
-                [
-                    gt["BX"] - raw["BX"],
-                    gt["BY"] - raw["BY"],
-                    gt["Major"] - raw["Major"],
-                    gt["Minor"] - raw["Minor"],
-                    _angle_residual(gt["Angle"], raw["Angle"]),
-                ]
-            )
-
-        if len(features) < 10:
-            raise ValueError("Need at least 10 successful detections to train correction model.")
-
-        x_train = np.asarray(features, dtype=np.float64)
-        y_train = np.asarray(targets, dtype=np.float64)
-        self.correction_model = Pipeline(
-            [
-                ("scaler", StandardScaler()),
-                ("ridge", Ridge(alpha=5.0)),
-            ]
-        )
-        self.correction_model.fit(x_train, y_train)
 
     def _best_raw_detection(self, image: np.ndarray) -> dict[str, float] | None:
         return self._detect_ablation_ring(image) or self._detect_from_blob(image)
@@ -697,36 +637,6 @@ class AblationEdgeDetector:
                 best_score = score
                 best = fitted
         return best
-
-    def _feature_vector(self, image: np.ndarray, raw: dict[str, float]) -> list[float]:
-        angle_rad = np.deg2rad(raw["Angle"])
-        dark_fraction = float(np.mean(image < self.params["dark_threshold"]))
-        return [
-            raw["BX"],
-            raw["BY"],
-            raw["Major"],
-            raw["Minor"],
-            raw["Angle"],
-            float(np.sin(2.0 * angle_rad)),
-            float(np.cos(2.0 * angle_rad)),
-            float(np.mean(image)),
-            float(np.std(image)),
-            dark_fraction,
-        ]
-
-    def _apply_correction(self, image: np.ndarray, raw: dict[str, float]) -> dict[str, float]:
-        assert self.correction_model is not None
-        features = np.asarray([self._feature_vector(image, raw)], dtype=np.float64)
-        delta = self.correction_model.predict(features)[0]
-        return canonicalize_fiji_ellipse_params(
-            {
-                "BX": float(raw["BX"] + delta[0]),
-                "BY": float(raw["BY"] + delta[1]),
-                "Major": float(max(raw["Major"] + delta[2], 1.0)),
-                "Minor": float(max(raw["Minor"] + delta[3], 1.0)),
-                "Angle": float((raw["Angle"] + delta[4]) % 180.0),
-            }
-        )
 
 def compare_to_ground_truth(
     prediction: dict[str, float],
