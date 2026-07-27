@@ -4,9 +4,12 @@ Evaluated on the shared disc-level split (**78** train / **20** test discs), fra
 
 - **newEdit (circular)**: classical tuned with circular `ΔAngle²` (`detector_model.json`).
 - **newEdit (sincos)**: classical with quadratic sin/cos(2θ), **unnormalized** geometry (`detector_model_sincos.json`).
-- **newEdit (sincos, norm512)**: classical with geometry `/512` + sin/cos(2θ) (`detector_model_sincos_norm512.json`).
+- **newEdit (sincos, norm512)**: classical with geometry `/512` + sin/cos(2θ) (`detector_model_sincos_norm512.json`, tune stride=5).
+- **newEdit (sincos, norm512, full-grid stride1)**: same loss/grid (24 combos), tune stride=1 (`detector_model_sincos_norm512_full.json`).
 - **newEdit-withNN hybrid**: CNN on unnormalized-sincos classical (`hybrid_model.pt`).
 - **newEdit-withNN hybrid (norm512)**: CNN on norm512 classical (`hybrid_model_norm512.pt`).
+- **hybrid wide+aug (full classical)**: encoder `(64,128,256)` / MLP `(256,128)` + photometric/jitter (`hybrid_model_full_wide_aug.pt`).
+- **hybrid deep+aug (full classical)**: encoder `(16,32,64,128)` / MLP `(128,64)` + aug (`hybrid_model_full_deep_aug.pt`).
 - **withNN (hybrid / classical)**: older branch reference.
 
 Metrics: MAE = mean absolute error; RMSE from signed residuals (Angle uses shortest circular residual on a 180° period).
@@ -18,8 +21,11 @@ Metrics: MAE = mean absolute error; RMSE from signed residuals (Angle uses short
 | newEdit (circular ΔAngle²) | 800 | 100.0% | 14.06 | 19.47 | 9.96 | 12.62 | 35.48 | 43.11 |
 | newEdit (sincos, unnormalized) | 800 | 100.0% | 14.12 | 19.60 | 10.05 | 12.83 | 35.38 | 43.22 |
 | newEdit (sincos, norm512) | 800 | 100.0% | 13.22 | 19.96 | 9.27 | 11.98 | 34.15 | 41.74 |
+| newEdit (sincos, norm512, full-grid stride1) | 800 | 100.0% | 14.37 | 20.67 | 9.87 | 12.52 | 34.75 | 42.31 |
 | newEdit-withNN hybrid (on unnormalized sincos) | 800 | 100.0% | 14.69 | 19.20 | 8.50 | 10.92 | 11.27 | 16.08 |
 | newEdit-withNN hybrid (on norm512 classical) | 800 | 100.0% | 13.07 | 18.01 | 8.81 | 11.36 | 10.49 | 13.93 |
+| hybrid wide+aug (on full-grid classical) | 800 | 100.0% | 15.55 | 20.36 | 9.15 | 11.18 | 11.36 | 15.09 |
+| hybrid deep+aug (on full-grid classical) | 800 | 100.0% | 15.38 | 20.44 | 8.98 | 11.13 | 11.83 | 16.74 |
 | withNN (hybrid) | 800 | 100.0% | 13.82 | 17.96 | 8.12 | 10.22 | 11.65 | 15.99 |
 | withNN (classical only) | 800 | 100.0% | 16.53 | 22.32 | 11.53 | 15.15 | 38.50 | 45.99 |
 
@@ -106,6 +112,35 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 
 ---
 
+## feature/ablation-edge-detector-newEdit (sincos, norm512, full-grid stride1)
+
+Tuning loss: same norm512 sincos as above.  
+Search: full `GridSearchCV` over all **24** `DEFAULT_PARAM_GRID` combos, `GroupKFold` k=4, **tune-frame-stride=1** (all frames 6–45).  
+Artifact: `splits/detector_model_sincos_norm512_full.json` (`edge_blur=7`, `dark_threshold=18`, `min_dark_run=4`).  
+CV quadratic loss: **1.0456** (prior stride-5 norm512 was 1.0510). Search wall time ~1h 21m (`n_jobs=4`).
+
+Train samples: **3120** (detected 3120 / 3120, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.50 | 13.95 |
+| BY | 3.64 | 5.76 |
+| Major | 14.89 | 22.79 |
+| Minor | 9.63 | 13.79 |
+| Angle | 27.48 | 34.57 |
+
+Test samples: **800** (detected 800 / 800, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 4.83 | 6.28 |
+| BY | 2.70 | 3.57 |
+| Major | 14.37 | 20.67 |
+| Minor | 9.87 | 12.52 |
+| Angle | 34.75 | 42.31 |
+
+---
+
 ## feature/ablation-edge-detector-newEdit-withNN (hybrid on unnormalized sincos)
 
 Classical base: `splits/detector_model_sincos.json`.  
@@ -161,6 +196,64 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 
 ---
 
+## hybrid wide+aug (on full-grid classical)
+
+Classical base: `splits/detector_model_sincos_norm512_full.json`.  
+CNN: encoder `(64,128,256)`, MLP `(256,128)`, dropout `0.2`, **50** epochs, train-only photometric + ±8px jitter (`--augment`).  
+Artifacts: `splits/hybrid_model_full_wide_aug.pt`, `splits/hybrid_model_full_wide_aug.json`.  
+Best val loss: **0.0145**.
+
+Train samples: **3120** (detected 3120 / 3120, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 4.74 | 8.14 |
+| BY | 3.07 | 4.39 |
+| Major | 11.21 | 14.88 |
+| Minor | 7.78 | 11.53 |
+| Angle | 6.29 | 12.84 |
+
+Test samples: **800** (detected 800 / 800, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.72 | 9.01 |
+| BY | 2.94 | 3.79 |
+| Major | 15.55 | 20.36 |
+| Minor | 9.15 | 11.18 |
+| Angle | 11.36 | 15.09 |
+
+---
+
+## hybrid deep+aug (on full-grid classical)
+
+Classical base: `splits/detector_model_sincos_norm512_full.json` (same as wide).  
+CNN: encoder `(16,32,64,128)`, MLP `(128,64)`, dropout `0.2`, **50** epochs, same `--augment`.  
+Artifacts: `splits/hybrid_model_full_deep_aug.pt`, `splits/hybrid_model_full_deep_aug.json`.  
+Best val loss: **0.0141**.
+
+Train samples: **3120** (detected 3120 / 3120, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.06 | 9.20 |
+| BY | 3.19 | 4.71 |
+| Major | 11.69 | 15.65 |
+| Minor | 8.20 | 12.04 |
+| Angle | 5.71 | 11.58 |
+
+Test samples: **800** (detected 800 / 800, 100.0%)
+
+| Param | MAE | RMSE |
+|-------|-----|------|
+| BX | 5.47 | 8.49 |
+| BY | 2.95 | 3.90 |
+| Major | 15.38 | 20.44 |
+| Minor | 8.98 | 11.13 |
+| Angle | 11.83 | 16.74 |
+
+---
+
 ## feature/ablation-edge-detector-withNN (hybrid)
 
 Train samples: **3120** (detected 3120 / 3120, 100.0%)
@@ -206,3 +299,11 @@ Test samples: **800** (detected 800 / 800, 100.0%)
 | Major | 16.53 | 22.32 |
 | Minor | 11.53 | 15.15 |
 | Angle | 38.50 | 45.99 |
+
+---
+
+## Takeaways (full-grid classical → width vs depth + aug)
+
+- **Full-grid classical (stride=1)** found different params (`edge_blur=7`, `dark_threshold=18`, `min_dark_run=4`) and a slightly better CV loss (1.0456 vs 1.0510), but **held-out test axes/angle did not improve** vs prior stride-5 norm512 (`Major` 14.37 vs 13.22). Thorough search ≠ better test classical.
+- **Wide+aug vs deep+aug** on that full-grid base (same aug, 50 epochs): differences are small. Deep is slightly better on test **Major/Minor**; wide is slightly better on test **Angle**. Neither beats the prior hybrid on the stronger stride-5 classical (`hybrid_model_norm512`: Major 13.07 / Angle 10.49).
+- **Verdict:** on this base, **neither width nor depth clearly wins**; classical quality dominates. Prefer expanding classical search (e.g. `r_min`/`r_max`) or sticking with the stride-5 norm512 classical + baseline hybrid over stacking a wider/deeper CNN on the weaker full-grid base.

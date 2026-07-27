@@ -89,10 +89,64 @@ except ImportError:
     TorchDataset = object  # type: ignore[misc, assignment]
 
 
+def _augment_crop(
+    crop: np.ndarray,
+    *,
+    max_shift: int = 8,
+    brightness: float = 0.15,
+    contrast: float = 0.15,
+    noise_std: float = 0.02,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Photometric + small translation jitter on a float crop in [0, 1]."""
+    out = crop.astype(np.float32, copy=True)
+    h, w = out.shape
+
+    if max_shift > 0:
+        dy = int(rng.integers(-max_shift, max_shift + 1))
+        dx = int(rng.integers(-max_shift, max_shift + 1))
+        if dy != 0 or dx != 0:
+            padded = np.pad(out, max_shift, mode="edge")
+            y0 = max_shift + dy
+            x0 = max_shift + dx
+            out = padded[y0 : y0 + h, x0 : x0 + w]
+
+    if brightness > 0:
+        scale = float(rng.uniform(1.0 - brightness, 1.0 + brightness))
+        out = out * scale
+
+    if contrast > 0:
+        factor = float(rng.uniform(1.0 - contrast, 1.0 + contrast))
+        mean = float(out.mean())
+        out = (out - mean) * factor + mean
+
+    if noise_std > 0:
+        out = out + rng.normal(0.0, noise_std, size=out.shape).astype(np.float32)
+
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
 class _HybridPairDataset(TorchDataset):
-    def __init__(self, pairs: list[dict[str, Any]], torch_mod) -> None:
+    def __init__(
+        self,
+        pairs: list[dict[str, Any]],
+        torch_mod,
+        *,
+        augment: bool = False,
+        aug_max_shift: int = 8,
+        aug_brightness: float = 0.15,
+        aug_contrast: float = 0.15,
+        aug_noise_std: float = 0.02,
+        seed: int = 0,
+    ) -> None:
         self.pairs = pairs
         self._torch = torch_mod
+        self.augment = augment
+        self.aug_max_shift = aug_max_shift
+        self.aug_brightness = aug_brightness
+        self.aug_contrast = aug_contrast
+        self.aug_noise_std = aug_noise_std
+        self._rng = np.random.default_rng(seed)
 
     def __len__(self) -> int:
         return len(self.pairs)
@@ -100,8 +154,18 @@ class _HybridPairDataset(TorchDataset):
     def __getitem__(self, index: int) -> dict[str, Any]:
         torch = self._torch
         item = self.pairs[index]
+        crop = item["crop"]
+        if self.augment:
+            crop = _augment_crop(
+                crop,
+                max_shift=self.aug_max_shift,
+                brightness=self.aug_brightness,
+                contrast=self.aug_contrast,
+                noise_std=self.aug_noise_std,
+                rng=self._rng,
+            )
         return {
-            "crop": torch.from_numpy(item["crop"]).unsqueeze(0),
+            "crop": torch.from_numpy(crop).unsqueeze(0),
             "raw_feat": torch.from_numpy(item["raw_feat"]),
             "raw_params": torch.from_numpy(item["raw_params"]),
             "gt_params": torch.from_numpy(item["gt_params"]),
@@ -128,9 +192,14 @@ def train_hybrid_refiner(
     device: str | None = None,
     val_fraction: float = 0.15,
     model_basename: str = "hybrid_model",
+    augment: bool = False,
+    aug_max_shift: int = 8,
+    aug_brightness: float = 0.15,
+    aug_contrast: float = 0.15,
+    aug_noise_std: float = 0.02,
 ) -> dict[str, Any]:
     torch = _require_torch()
-    from torch.utils.data import DataLoader, random_split
+    from torch.utils.data import DataLoader, Subset
 
     data_dir = Path(data_dir)
     output_dir = Path(output_dir)
@@ -144,7 +213,7 @@ def train_hybrid_refiner(
     print(f"Classical detector: {detector_model_path}")
     print(
         f"Arch: encoder_channels={encoder_channels} "
-        f"mlp_hidden={mlp_hidden} dropout={dropout}"
+        f"mlp_hidden={mlp_hidden} dropout={dropout} augment={augment}"
     )
 
     detector = load_trained_detector(detector_model_path)
@@ -170,13 +239,32 @@ def train_hybrid_refiner(
     if len(train_pairs) < 20:
         raise ValueError("Too few classical detections to train hybrid refiner.")
 
-    full_ds = _HybridPairDataset(train_pairs, torch)
-    n_val = max(1, int(round(len(full_ds) * val_fraction)))
-    n_train = len(full_ds) - n_val
-    train_ds, val_ds = random_split(
-        full_ds,
-        [n_train, n_val],
-        generator=torch.Generator().manual_seed(42),
+    # Train-only aug: split indices first, then wrap train/val with separate datasets
+    # so val stays unaugmented.
+    n_total = len(train_pairs)
+    n_val = max(1, int(round(n_total * val_fraction)))
+    n_train = n_total - n_val
+    g = torch.Generator().manual_seed(42)
+    perm = torch.randperm(n_total, generator=g).tolist()
+    train_idx, val_idx = perm[:n_train], perm[n_train:]
+
+    aug_kwargs = dict(
+        aug_max_shift=aug_max_shift,
+        aug_brightness=aug_brightness,
+        aug_contrast=aug_contrast,
+        aug_noise_std=aug_noise_std,
+    )
+    train_ds = Subset(
+        _HybridPairDataset(
+            train_pairs, torch, augment=augment, seed=0, **aug_kwargs
+        ),
+        train_idx,
+    )
+    val_ds = Subset(
+        _HybridPairDataset(
+            train_pairs, torch, augment=False, seed=1, **aug_kwargs
+        ),
+        val_idx,
     )
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
@@ -263,6 +351,13 @@ def train_hybrid_refiner(
         "history": history,
         "detector_model": str(detector_model_path),
         "tuning_loss": "mean_quadratic_ellipse_sincos_angle_equal_weight",
+        "augment": {
+            "enabled": bool(augment),
+            "max_shift": int(aug_max_shift),
+            "brightness": float(aug_brightness),
+            "contrast": float(aug_contrast),
+            "noise_std": float(aug_noise_std),
+        },
         "split_policy": "disc_level_no_frame_leakage",
         "strategy": "this-branch classical ring fit + modular CNN residual",
     }

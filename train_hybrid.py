@@ -66,6 +66,35 @@ def main() -> None:
     parser.add_argument("--frame-max", type=int, default=DEFAULT_FRAME_MAX)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument(
+        "--augment",
+        action="store_true",
+        help="Photometric + crop-jitter augmentation on train crops only",
+    )
+    parser.add_argument(
+        "--aug-max-shift",
+        type=int,
+        default=8,
+        help="Max ±px translation jitter when --augment (default: 8)",
+    )
+    parser.add_argument(
+        "--aug-brightness",
+        type=float,
+        default=0.15,
+        help="Brightness scale range when --augment (default: 0.15)",
+    )
+    parser.add_argument(
+        "--aug-contrast",
+        type=float,
+        default=0.15,
+        help="Contrast factor range when --augment (default: 0.15)",
+    )
+    parser.add_argument(
+        "--aug-noise-std",
+        type=float,
+        default=0.02,
+        help="Gaussian noise std when --augment (default: 0.02)",
+    )
+    parser.add_argument(
         "--quick",
         action="store_true",
         help="Smoke test: fewer samples and epochs",
@@ -90,6 +119,11 @@ def main() -> None:
         max_test_samples=200 if args.quick else None,
         device=args.device,
         model_basename=args.model_basename,
+        augment=args.augment,
+        aug_max_shift=args.aug_max_shift,
+        aug_brightness=args.aug_brightness,
+        aug_contrast=args.aug_contrast,
+        aug_noise_std=args.aug_noise_std,
     )
 
 
